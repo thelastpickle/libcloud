@@ -17,6 +17,7 @@ import base64
 import hmac
 import time
 from hashlib import sha1
+from retrying import retry
 
 import libcloud.utils.py3
 
@@ -76,6 +77,8 @@ NAMESPACE = 'http://s3.amazonaws.com/doc/%s/' % (API_VERSION)
 
 # AWS multi-part chunks must be minimum 5MB
 CHUNK_SIZE = 5 * 1024 * 1024
+# Number of retries for each AWS multi-part chunk
+MAX_CHUNK_RETRIES = 5
 
 # Desired number of items in each response inside a paginated request in
 # ex_iterate_multipart_uploads.
@@ -546,12 +549,7 @@ class BaseS3StorageDriver(StorageDriver):
 
             params['partNumber'] = count
 
-            resp = self.connection.request(request_path, method='PUT',
-                                           data=data, headers=headers,
-                                           params=params)
-
-            if resp.status != httplib.OK:
-                raise LibcloudError('Error uploading chunk', driver=self)
+            resp = self._upload_chunk(request_path, data, headers, params)
 
             server_hash = resp.headers['etag'].replace('"', '')
 
@@ -563,6 +561,37 @@ class BaseS3StorageDriver(StorageDriver):
             data_hash = data_hash.hexdigest()
 
         return (chunks, data_hash, bytes_transferred)
+
+    @retry(stop_max_attempt_number=MAX_CHUNK_RETRIES,
+           wait_exponential_multiplier=10000,
+           wait_exponential_max=120000)
+    def _upload_chunk(self, request_path, data, headers, params):
+        """
+        Uploads a single chunk to S3.
+        Will get retried automatically on failure until the attemps are exhausted.
+
+        :param request_path: Path for the object to upload
+        :type request_path: ``str``
+
+        :param data: Content of the chunk we're uploading
+        :type data: ``bytes``
+
+        :param headers: HTTP content headers for the chunk
+        :type headers: ``dict``
+
+        :param params: HTTP parameters for the chunk upload
+        :type params: ``dict``
+
+        :return: The HTTP response from S3
+        :rtype: ``Response``
+        """
+        resp = self.connection.request(request_path, method='PUT',
+                                       data=data, headers=headers,
+                                       params=params)
+        if resp.status != httplib.OK:
+            raise LibcloudError('Error uploading chunk', driver=self)
+
+        return resp
 
     def _commit_multipart(self, container, object_name, upload_id, chunks):
         """
@@ -613,7 +642,7 @@ class BaseS3StorageDriver(StorageDriver):
         body = response.parse_body()
         server_hash = body.find(fixxpath(xpath='ETag',
                                          namespace=self.namespace)).text
-        return server_hash
+        return server_hash.replace('"', '')
 
     def _abort_multipart(self, container, object_name, upload_id):
         """

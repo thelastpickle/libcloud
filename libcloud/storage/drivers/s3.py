@@ -593,9 +593,7 @@ class BaseS3StorageDriver(StorageDriver):
 
         return (chunks, data_hash, bytes_transferred)
 
-    @retry(stop_max_attempt_number=MAX_CHUNK_RETRIES,
-           wait_exponential_multiplier=10000,
-           wait_exponential_max=120000)
+    @retry(stop_max_attempt_number=MAX_CHUNK_RETRIES, wait_fixed=5000)
     def _upload_chunk(self, request_path, data, headers, params):
         """
         Uploads a single chunk to S3.

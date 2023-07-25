@@ -549,7 +549,7 @@ class BaseS3StorageDriver(StorageDriver):
                 "destination_path": destination_path,
                 "overwrite_existing": overwrite_existing,
                 "delete_on_failure": delete_on_failure,
-                "partial_download": True,
+                "partial_download": True
             },
             success_status_code=httplib.PARTIAL_CONTENT,
         )
